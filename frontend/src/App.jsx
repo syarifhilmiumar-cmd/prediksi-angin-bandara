@@ -104,16 +104,29 @@ export default function App() {
   return (
     <div style={{ minHeight: "100vh", background: "#0a0f1e", color: "#e2e8f0", fontFamily: "'Segoe UI', sans-serif" }}>
       {/* HEADER */}
-      <div style={{ background: "linear-gradient(135deg, #0c1a3a, #1a3a6e)", padding: "2rem", textAlign: "center", borderBottom: "1px solid #1e3a5f" }}>
-        <div style={{ fontSize: "3rem" }}>✈️</div>
-        <h1 style={{ color: "#38bdf8", fontSize: "2rem", margin: "0.5rem 0", fontWeight: "800" }}>
-          Prediksi Kecepatan Angin Bandara
-        </h1>
-        <p style={{ color: "#94a3b8", margin: 0 }}>38 Bandara Provinsi Indonesia · Prediksi Per Jam · Machine Learning</p>
+<div style={{ background: "linear-gradient(135deg, #0c1a3a, #1a3a6e)", padding: "1.5rem 2rem", borderBottom: "1px solid #1e3a5f" }}>
+  <div style={{ maxWidth: "1100px", margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "1rem" }}>
+    
+    {/* Logo BMKG */}
+    <img src="/bmkg.png" alt="Logo BMKG" style={{ height: "70px", objectFit: "contain" }} />
+
+    {/* Judul Tengah */}
+    <div style={{ textAlign: "center", flex: 1 }}>
+      <div style={{ fontSize: "1rem", color: "#94a3b8", letterSpacing: "3px", textTransform: "uppercase", marginBottom: "0.25rem" }}>
+        Sistem Prediksi Angin Bandara Terpadu
       </div>
+      <h1 style={{ color: "#38bdf8", fontSize: "2.8rem", margin: "0", fontWeight: "900", letterSpacing: "2px", textShadow: "0 0 30px #38bdf855" }}>
+        ✈️ SIPANDU
+      </h1>
+      <div style={{ color: "#64748b", fontSize: "0.85rem", marginTop: "0.25rem" }}>
+        38 Bandara Provinsi Indonesia · Prediksi Per Jam · Machine Learning
+      </div>
+    </div>
 
-      <div style={{ maxWidth: "1100px", margin: "0 auto", padding: "2rem" }}>
-
+    {/* Logo STMKG */}
+    <img src="/stmkg.png" alt="Logo STMKG" style={{ height: "70px", objectFit: "contain" }} />
+  </div>
+</div>
         {/* FORM */}
         <div style={{ background: "#0f1f3d", borderRadius: "16px", padding: "1.5rem", marginBottom: "1.5rem", border: "1px solid #1e3a5f" }}>
           <label style={{ display: "block", marginBottom: "0.5rem", color: "#94a3b8", fontWeight: "600" }}>🏢 Pilih Bandara:</label>
