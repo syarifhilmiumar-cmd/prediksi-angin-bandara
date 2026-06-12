@@ -54,7 +54,7 @@ export default function App() {
     setError("");
     setHasil(null);
     try {
-      const res = await axios.post("http://127.0.0.1:8000/api/prediksi", { kota });
+     const res = await axios.post("https://prediksi-angin-bandara-production.up.railway.app/api/prediksi", { kota });
       if (res.data.error) { setError(res.data.error); }
       else { setHasil(res.data); }
     } catch {
