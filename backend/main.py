@@ -4,8 +4,7 @@ from pydantic import BaseModel
 import requests
 import pandas as pd
 import numpy as np
-from datetime import datetime
-import pytz
+from datetime import datetime, timezone, timedelta
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LinearRegression
@@ -120,10 +119,9 @@ def proses_prediksi(req: RequestBandara):
         best_model = trained_models[best_algo]
 
         # 2. FORECAST 24 JAM KE DEPAN DARI JAM SEKARANG
-       from datetime import timezone, timedelta
-tz_jakarta = timezone(timedelta(hours=7))
-now = datetime.now(tz_jakarta)
-jam_sekarang = now.hour
+        tz_jakarta = timezone(timedelta(hours=7))
+        now = datetime.now(tz_jakarta)
+        jam_sekarang = now.hour
 
         url_fore = "https://api.open-meteo.com/v1/forecast"
         params_fore = {
@@ -134,27 +132,24 @@ jam_sekarang = now.hour
         }
         res_fore = requests.get(url_fore, params=params_fore).json()
 
-        # Index mulai = jam berikutnya (misal jam 18:19 → mulai index 19)
         index_mulai = jam_sekarang + 1
 
         all_precip = res_fore['hourly']['precipitation']
         all_temp   = res_fore['hourly']['temperature_2m']
         all_humid  = res_fore['hourly']['relative_humidity_2m']
         all_press  = res_fore['hourly']['surface_pressure']
-        all_time   = res_fore['hourly']['time']
 
         df_fore = pd.DataFrame({
-            "precipitation_sum":      all_precip[index_mulai:index_mulai+24],
-            "temperature_2m_mean":    all_temp[index_mulai:index_mulai+24],
+            "precipitation_sum":        all_precip[index_mulai:index_mulai+24],
+            "temperature_2m_mean":      all_temp[index_mulai:index_mulai+24],
             "relative_humidity_2m_max": all_humid[index_mulai:index_mulai+24],
-            "surface_pressure_mean":  all_press[index_mulai:index_mulai+24],
+            "surface_pressure_mean":    all_press[index_mulai:index_mulai+24],
         })
 
         X_fore_scaled = scaler.transform(df_fore)
         pred_kmh = best_model.predict(X_fore_scaled)
         pred_knot = [round(v * 0.539957, 2) for v in pred_kmh]
 
-        # Label jam: "19:00 (Hari ini)", "20:00 (Hari ini)", ..., "18:00 (Besok)"
         jam_list = []
         for i in range(24):
             total = jam_sekarang + 1 + i
