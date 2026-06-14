@@ -120,9 +120,10 @@ def proses_prediksi(req: RequestBandara):
         best_model = trained_models[best_algo]
 
         # 2. FORECAST 24 JAM KE DEPAN DARI JAM SEKARANG
-        tz = pytz.timezone("Asia/Jakarta")
-        now = datetime.now(tz)
-        jam_sekarang = now.hour  # misal 18
+       from datetime import timezone, timedelta
+tz_jakarta = timezone(timedelta(hours=7))
+now = datetime.now(tz_jakarta)
+jam_sekarang = now.hour
 
         url_fore = "https://api.open-meteo.com/v1/forecast"
         params_fore = {
