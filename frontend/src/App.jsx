@@ -112,10 +112,10 @@ export default function App() {
               Sistem Prediksi Angin Bandara Terpadu
             </div>
             <h1 style={{ color: "#38bdf8", fontSize: "2.8rem", margin: "0", fontWeight: "900", letterSpacing: "2px", textShadow: "0 0 30px #38bdf855" }}>
-              ✈️ SIPANDU
+              SIPANDU
             </h1>
             <div style={{ color: "#64748b", fontSize: "0.85rem", marginTop: "0.25rem" }}>
-              38 Bandara Provinsi Indonesia · Prediksi Per Jam · Machine Learning
+            
             </div>
           </div>
           <img src="/stmkg.png" alt="Logo STMKG" style={{ height: "70px", objectFit: "contain" }} />
@@ -126,7 +126,7 @@ export default function App() {
 
         {/* FORM */}
         <div style={{ background: "#0f1f3d", borderRadius: "16px", padding: "1.5rem", marginBottom: "1.5rem", border: "1px solid #1e3a5f" }}>
-          <label style={{ display: "block", marginBottom: "0.5rem", color: "#94a3b8", fontWeight: "600" }}>🏢 Pilih Bandara:</label>
+          <label style={{ display: "block", marginBottom: "0.5rem", color: "#94a3b8", fontWeight: "600" }}>Pilih Bandara:</label>
           <select
             value={kota}
             onChange={(e) => setKota(e.target.value)}
