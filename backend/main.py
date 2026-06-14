@@ -4,6 +4,8 @@ from pydantic import BaseModel
 import requests
 import pandas as pd
 import numpy as np
+from datetime import datetime
+import pytz
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LinearRegression
@@ -75,6 +77,7 @@ def proses_prediksi(req: RequestBandara):
         lat = koordinat_bandara[kota]["lat"]
         lon = koordinat_bandara[kota]["lon"]
 
+        # 1. TRAINING DATA HISTORIS
         url_hist = "https://archive-api.open-meteo.com/v1/archive"
         params_hist = {
             "latitude": lat, "longitude": lon,
@@ -116,31 +119,54 @@ def proses_prediksi(req: RequestBandara):
         best_algo = df_eval.loc[df_eval['RMSE'].idxmin(), 'Model']
         best_model = trained_models[best_algo]
 
+        # 2. FORECAST 24 JAM KE DEPAN DARI JAM SEKARANG
+        tz = pytz.timezone("Asia/Jakarta")
+        now = datetime.now(tz)
+        jam_sekarang = now.hour  # misal 18
+
         url_fore = "https://api.open-meteo.com/v1/forecast"
         params_fore = {
             "latitude": lat, "longitude": lon,
             "hourly": "precipitation,temperature_2m,relative_humidity_2m,surface_pressure",
             "timezone": "Asia/Jakarta",
-            "forecast_days": 2
+            "forecast_days": 3
         }
         res_fore = requests.get(url_fore, params=params_fore).json()
 
+        # Index mulai = jam berikutnya (misal jam 18:19 → mulai index 19)
+        index_mulai = jam_sekarang + 1
+
+        all_precip = res_fore['hourly']['precipitation']
+        all_temp   = res_fore['hourly']['temperature_2m']
+        all_humid  = res_fore['hourly']['relative_humidity_2m']
+        all_press  = res_fore['hourly']['surface_pressure']
+        all_time   = res_fore['hourly']['time']
+
         df_fore = pd.DataFrame({
-            "precipitation_sum": res_fore['hourly']['precipitation'][24:48],
-            "temperature_2m_mean": res_fore['hourly']['temperature_2m'][24:48],
-            "relative_humidity_2m_max": res_fore['hourly']['relative_humidity_2m'][24:48],
-            "surface_pressure_mean": res_fore['hourly']['surface_pressure'][24:48],
+            "precipitation_sum":      all_precip[index_mulai:index_mulai+24],
+            "temperature_2m_mean":    all_temp[index_mulai:index_mulai+24],
+            "relative_humidity_2m_max": all_humid[index_mulai:index_mulai+24],
+            "surface_pressure_mean":  all_press[index_mulai:index_mulai+24],
         })
 
         X_fore_scaled = scaler.transform(df_fore)
         pred_kmh = best_model.predict(X_fore_scaled)
         pred_knot = [round(v * 0.539957, 2) for v in pred_kmh]
-        jam_list = [f"{str(i).zfill(2)}:00" for i in range(24)]
+
+        # Label jam: "19:00 (Hari ini)", "20:00 (Hari ini)", ..., "18:00 (Besok)"
+        jam_list = []
+        for i in range(24):
+            total = jam_sekarang + 1 + i
+            jam   = total % 24
+            hari  = total // 24
+            label = "Hari ini" if hari == 0 else "Besok" if hari == 1 else "Lusa"
+            jam_list.append(f"{str(jam).zfill(2)}:00 ({label})")
 
         return {
             "status": "sukses",
             "algoritma_terbaik": best_algo,
             "metrik": df_eval.to_dict('records'),
+            "jam_mulai": f"{str(jam_sekarang + 1).zfill(2)}:00",
             "prediksi_perjam": [
                 {"jam": jam_list[i], "knot": pred_knot[i]} for i in range(24)
             ]
