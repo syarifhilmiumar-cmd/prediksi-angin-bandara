@@ -4,7 +4,6 @@ import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import L from "leaflet";
 
-// Fix icon leaflet
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
@@ -103,30 +102,28 @@ export default function App() {
 
   return (
     <div style={{ minHeight: "100vh", background: "#0a0f1e", color: "#e2e8f0", fontFamily: "'Segoe UI', sans-serif" }}>
+
       {/* HEADER */}
-<div style={{ background: "linear-gradient(135deg, #0c1a3a, #1a3a6e)", padding: "1.5rem 2rem", borderBottom: "1px solid #1e3a5f" }}>
-  <div style={{ maxWidth: "1100px", margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "1rem" }}>
-    
-    {/* Logo BMKG */}
-    <img src="/bmkg.png" alt="Logo BMKG" style={{ height: "70px", objectFit: "contain" }} />
-
-    {/* Judul Tengah */}
-    <div style={{ textAlign: "center", flex: 1 }}>
-      <div style={{ fontSize: "1rem", color: "#94a3b8", letterSpacing: "3px", textTransform: "uppercase", marginBottom: "0.25rem" }}>
-        Sistem Prediksi Angin Bandara Terpadu
+      <div style={{ background: "linear-gradient(135deg, #0c1a3a, #1a3a6e)", padding: "1.5rem 2rem", borderBottom: "1px solid #1e3a5f" }}>
+        <div style={{ maxWidth: "1100px", margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "1rem" }}>
+          <img src="/bmkg.png" alt="Logo BMKG" style={{ height: "70px", objectFit: "contain" }} />
+          <div style={{ textAlign: "center", flex: 1 }}>
+            <div style={{ fontSize: "0.85rem", color: "#94a3b8", letterSpacing: "3px", textTransform: "uppercase", marginBottom: "0.25rem" }}>
+              Sistem Prediksi Angin Bandara Terpadu
+            </div>
+            <h1 style={{ color: "#38bdf8", fontSize: "2.8rem", margin: "0", fontWeight: "900", letterSpacing: "2px", textShadow: "0 0 30px #38bdf855" }}>
+              ✈️ SIPANDU
+            </h1>
+            <div style={{ color: "#64748b", fontSize: "0.85rem", marginTop: "0.25rem" }}>
+              38 Bandara Provinsi Indonesia · Prediksi Per Jam · Machine Learning
+            </div>
+          </div>
+          <img src="/stmkg.png" alt="Logo STMKG" style={{ height: "70px", objectFit: "contain" }} />
+        </div>
       </div>
-      <h1 style={{ color: "#38bdf8", fontSize: "2.8rem", margin: "0", fontWeight: "900", letterSpacing: "2px", textShadow: "0 0 30px #38bdf855" }}>
-        ✈️ SIPANDU
-      </h1>
-      <div style={{ color: "#64748b", fontSize: "0.85rem", marginTop: "0.25rem" }}>
-        38 Bandara Provinsi Indonesia · Prediksi Per Jam · Machine Learning
-      </div>
-    </div>
 
-    {/* Logo STMKG */}
-    <img src="/stmkg.png" alt="Logo STMKG" style={{ height: "70px", objectFit: "contain" }} />
-  </div>
-</div>
+      <div style={{ maxWidth: "1100px", margin: "0 auto", padding: "2rem" }}>
+
         {/* FORM */}
         <div style={{ background: "#0f1f3d", borderRadius: "16px", padding: "1.5rem", marginBottom: "1.5rem", border: "1px solid #1e3a5f" }}>
           <label style={{ display: "block", marginBottom: "0.5rem", color: "#94a3b8", fontWeight: "600" }}>🏢 Pilih Bandara:</label>
@@ -143,7 +140,7 @@ export default function App() {
           <button
             onClick={handlePrediksi}
             disabled={loading}
-            style={{ width: "100%", padding: "0.9rem", borderRadius: "10px", background: loading ? "#334155" : "linear-gradient(135deg, #0284c7, #0ea5e9)", color: "white", border: "none", fontSize: "1.1rem", cursor: loading ? "not-allowed" : "pointer", fontWeight: "bold", letterSpacing: "0.5px" }}
+            style={{ width: "100%", padding: "0.9rem", borderRadius: "10px", background: loading ? "#334155" : "linear-gradient(135deg, #0284c7, #0ea5e9)", color: "white", border: "none", fontSize: "1.1rem", cursor: loading ? "not-allowed" : "pointer", fontWeight: "bold" }}
           >
             {loading ? "⏳ Memproses Data... (30-60 detik)" : "🔍 Prediksi Sekarang"}
           </button>
@@ -157,15 +154,8 @@ export default function App() {
 
         {/* PETA */}
         <div style={{ borderRadius: "16px", overflow: "hidden", marginBottom: "1.5rem", border: "1px solid #1e3a5f", height: "380px" }}>
-          <MapContainer
-            center={[-2.5, 118]}
-            zoom={5}
-            style={{ height: "100%", width: "100%" }}
-          >
-            <TileLayer
-              attribution='&copy; OpenStreetMap'
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            />
+          <MapContainer center={[-2.5, 118]} zoom={5} style={{ height: "100%", width: "100%" }}>
+            <TileLayer attribution='&copy; OpenStreetMap' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
             {mapPos && (
               <>
                 <FlyToLocation lat={mapPos.lat} lon={mapPos.lon} />
@@ -179,11 +169,11 @@ export default function App() {
 
         {hasil && ringkasan && (
           <div>
-            {/* RINGKASAN KATEGORI */}
+            {/* RINGKASAN */}
             <div style={{ background: ringkasan.kategori.bg, border: `2px solid ${ringkasan.kategori.color}`, borderRadius: "16px", padding: "1.5rem", marginBottom: "1.5rem", textAlign: "center" }}>
               <div style={{ fontSize: "3rem" }}>{ringkasan.kategori.icon}</div>
               <div style={{ fontSize: "2rem", fontWeight: "800", color: ringkasan.kategori.color }}>{ringkasan.kategori.label}</div>
-              <div style={{ color: "#e2e8f0", margin: "0.5rem 0", fontSize: "1.1rem" }}>{ringkasan.kategori.tips}</div>
+              <div style={{ color: "#e2e8f0", margin: "0.5rem 0" }}>{ringkasan.kategori.tips}</div>
               <div style={{ display: "flex", justifyContent: "center", gap: "2rem", marginTop: "1rem" }}>
                 <div>
                   <div style={{ color: "#94a3b8", fontSize: "0.85rem" }}>Rata-rata</div>
@@ -261,6 +251,11 @@ export default function App() {
             </div>
           </div>
         )}
+      </div>
+
+      {/* FOOTER */}
+      <div style={{ textAlign: "center", padding: "2rem", borderTop: "1px solid #1e3a5f", color: "#334155", marginTop: "2rem", fontSize: "0.85rem" }}>
+        © 2026 SIPANDU · STMKG · Didukung oleh Data BMKG & Open-Meteo
       </div>
     </div>
   );
