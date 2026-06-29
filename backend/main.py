@@ -5,7 +5,7 @@ import requests
 import pandas as pd
 import numpy as np
 from datetime import datetime, timezone, timedelta
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, GridSearchCV, cross_val_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LinearRegression
 from sklearn.tree import DecisionTreeRegressor
@@ -66,6 +66,48 @@ koordinat_bandara = {
 class RequestBandara(BaseModel):
     kota: str
 
+def tune_and_evaluate(name, model, param_grid, X_train_scaled, X_test_scaled, y_train, y_test, cv=5):
+    """
+    Melakukan GridSearchCV + cross-validation pada model,
+    mengembalikan model terbaik beserta metriknya.
+    """
+    grid = GridSearchCV(
+        estimator=model,
+        param_grid=param_grid,
+        scoring='neg_root_mean_squared_error',
+        cv=cv,
+        n_jobs=-1,
+        refit=True
+    )
+    grid.fit(X_train_scaled, y_train)
+    best_model = grid.best_estimator_
+    best_params = grid.best_params_
+
+    # Evaluasi pada data uji
+    pred = best_model.predict(X_test_scaled)
+    rmse = np.sqrt(mean_squared_error(y_test, pred))
+    mae  = mean_absolute_error(y_test, pred)
+    r2   = r2_score(y_test, pred)
+
+    # Cross-validation score pada data latih
+    cv_scores = cross_val_score(
+        best_model, X_train_scaled, y_train,
+        scoring='neg_root_mean_squared_error',
+        cv=cv, n_jobs=-1
+    )
+    cv_rmse_mean = round(float(-cv_scores.mean()), 4)
+    cv_rmse_std  = round(float(cv_scores.std()), 4)
+
+    return best_model, {
+        "Model"        : name,
+        "Best_Params"  : str(best_params),
+        "RMSE"         : round(rmse, 4),
+        "MAE"          : round(mae, 4),
+        "R2"           : round(r2, 4),
+        "CV_RMSE_Mean" : cv_rmse_mean,
+        "CV_RMSE_Std"  : cv_rmse_std,
+    }
+
 @app.post("/api/prediksi")
 def proses_prediksi(req: RequestBandara):
     try:
@@ -76,80 +118,127 @@ def proses_prediksi(req: RequestBandara):
         lat = koordinat_bandara[kota]["lat"]
         lon = koordinat_bandara[kota]["lon"]
 
-        # 1. TRAINING DATA HISTORIS
+        # ── 1. AMBIL DATA HISTORIS ──────────────────────────────────────
         url_hist = "https://archive-api.open-meteo.com/v1/archive"
         params_hist = {
-            "latitude": lat, "longitude": lon,
-            "start_date": "1996-01-01", "end_date": "2025-12-31",
-            "daily": "wind_speed_10m_max,precipitation_sum,temperature_2m_mean,relative_humidity_2m_max,surface_pressure_mean",
-            "timezone": "Asia/Jakarta"
+            "latitude"  : lat, "longitude": lon,
+            "start_date": "1996-01-01", "end_date": "2025-06-01",
+            "daily"     : "wind_speed_10m_max,precipitation_sum,"
+                          "temperature_2m_mean,relative_humidity_2m_max,"
+                          "surface_pressure_mean",
+            "timezone"  : "Asia/Jakarta"
         }
         res_hist = requests.get(url_hist, params=params_hist).json()
         df = pd.DataFrame(res_hist["daily"]).dropna()
 
-        X = df[['precipitation_sum', 'temperature_2m_mean', 'relative_humidity_2m_max', 'surface_pressure_mean']]
+        X = df[['precipitation_sum', 'temperature_2m_mean',
+                 'relative_humidity_2m_max', 'surface_pressure_mean']]
         y = df['wind_speed_10m_max']
 
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        # ── 2. SPLIT & STANDARISASI ─────────────────────────────────────
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42
+        )
         scaler = StandardScaler()
         X_train_scaled = scaler.fit_transform(X_train)
-        X_test_scaled = scaler.transform(X_test)
+        X_test_scaled  = scaler.transform(X_test)
 
-        models = {
-            "Linear Regression": LinearRegression(),
-            "Decision Tree": DecisionTreeRegressor(random_state=42),
-            "Random Forest": RandomForestRegressor(n_estimators=100, random_state=42),
-            "SVM (SVR)": SVR(kernel='rbf')
-        }
+        # ── 3. DEFINISI MODEL + GRID HYPERPARAMETER ─────────────────────
+        model_configs = [
+            (
+                "Linear Regression",
+                LinearRegression(),
+                {
+                    "fit_intercept": [True, False],
+                    "positive"     : [False]
+                }
+            ),
+            (
+                "Decision Tree",
+                DecisionTreeRegressor(random_state=42),
+                {
+                    "max_depth"        : [3, 5, 10, None],
+                    "min_samples_split": [2, 5, 10],
+                    "min_samples_leaf" : [1, 2, 4],
+                    "max_features"     : ["sqrt", "log2", None]
+                }
+            ),
+            (
+                "Random Forest",
+                RandomForestRegressor(random_state=42, n_jobs=-1),
+                {
+                    "n_estimators"     : [100, 200, 300],
+                    "max_depth"        : [5, 10, None],
+                    "min_samples_split": [2, 5],
+                    "min_samples_leaf" : [1, 2],
+                    "max_features"     : ["sqrt", "log2"]
+                }
+            ),
+            (
+                "SVM (SVR)",
+                SVR(),
+                {
+                    "kernel"  : ["rbf", "linear", "poly"],
+                    "C"       : [0.1, 1, 10, 100],
+                    "epsilon" : [0.01, 0.1, 0.5],
+                    "gamma"   : ["scale", "auto"]
+                }
+            ),
+        ]
 
-        metrics = []
+        # ── 4. TRAINING + TUNING + EVALUASI ────────────────────────────
+        metrics        = []
         trained_models = {}
 
-        for name, model in models.items():
-            model.fit(X_train_scaled, y_train)
-            pred = model.predict(X_test_scaled)
-            rmse = np.sqrt(mean_squared_error(y_test, pred))
-            mae = mean_absolute_error(y_test, pred)
-            r2 = r2_score(y_test, pred)
-            metrics.append({"Model": name, "RMSE": rmse, "MAE": mae, "R2": r2})
-            trained_models[name] = model
+        for name, model, param_grid in model_configs:
+            best_model, metric = tune_and_evaluate(
+                name, model, param_grid,
+                X_train_scaled, X_test_scaled,
+                y_train, y_test,
+                cv=5
+            )
+            metrics.append(metric)
+            trained_models[name] = best_model
 
-        df_eval = pd.DataFrame(metrics)
+        # ── 5. PILIH MODEL TERBAIK (RMSE TERENDAH) ─────────────────────
+        df_eval   = pd.DataFrame(metrics)
         best_algo = df_eval.loc[df_eval['RMSE'].idxmin(), 'Model']
         best_model = trained_models[best_algo]
 
-        # 2. FORECAST 24 JAM KE DEPAN DARI JAM SEKARANG
+        # ── 6. AMBIL DATA PRAKIRAAN PER JAM ────────────────────────────
         tz_jakarta = timezone(timedelta(hours=7))
-        now = datetime.now(tz_jakarta)
+        now        = datetime.now(tz_jakarta)
         jam_sekarang = now.hour
 
         url_fore = "https://api.open-meteo.com/v1/forecast"
         params_fore = {
-            "latitude": lat, "longitude": lon,
-            "hourly": "precipitation,temperature_2m,relative_humidity_2m,surface_pressure",
-            "timezone": "Asia/Jakarta",
+            "latitude"    : lat, "longitude": lon,
+            "hourly"      : "precipitation,temperature_2m,"
+                            "relative_humidity_2m,surface_pressure",
+            "timezone"    : "Asia/Jakarta",
             "forecast_days": 3
         }
         res_fore = requests.get(url_fore, params=params_fore).json()
 
         index_mulai = jam_sekarang + 1
-
-        all_precip = res_fore['hourly']['precipitation']
-        all_temp   = res_fore['hourly']['temperature_2m']
-        all_humid  = res_fore['hourly']['relative_humidity_2m']
-        all_press  = res_fore['hourly']['surface_pressure']
+        all_precip  = res_fore['hourly']['precipitation']
+        all_temp    = res_fore['hourly']['temperature_2m']
+        all_humid   = res_fore['hourly']['relative_humidity_2m']
+        all_press   = res_fore['hourly']['surface_pressure']
 
         df_fore = pd.DataFrame({
-            "precipitation_sum":        all_precip[index_mulai:index_mulai+24],
-            "temperature_2m_mean":      all_temp[index_mulai:index_mulai+24],
-            "relative_humidity_2m_max": all_humid[index_mulai:index_mulai+24],
-            "surface_pressure_mean":    all_press[index_mulai:index_mulai+24],
+            "precipitation_sum"       : all_precip[index_mulai:index_mulai+24],
+            "temperature_2m_mean"     : all_temp  [index_mulai:index_mulai+24],
+            "relative_humidity_2m_max": all_humid [index_mulai:index_mulai+24],
+            "surface_pressure_mean"   : all_press [index_mulai:index_mulai+24],
         })
 
+        # ── 7. PREDIKSI & KONVERSI ──────────────────────────────────────
         X_fore_scaled = scaler.transform(df_fore)
-        pred_kmh = best_model.predict(X_fore_scaled)
-        pred_knot = [round(v * 0.539957, 2) for v in pred_kmh]
+        pred_kmh      = best_model.predict(X_fore_scaled)
+        pred_knot     = [round(float(v) * 0.539957, 2) for v in pred_kmh]
 
+        # ── 8. LABEL JAM DINAMIS ────────────────────────────────────────
         jam_list = []
         for i in range(24):
             total = jam_sekarang + 1 + i
@@ -158,13 +247,15 @@ def proses_prediksi(req: RequestBandara):
             label = "Hari ini" if hari == 0 else "Besok" if hari == 1 else "Lusa"
             jam_list.append(f"{str(jam).zfill(2)}:00 ({label})")
 
+        # ── 9. RETURN RESPONSE ──────────────────────────────────────────
         return {
-            "status": "sukses",
+            "status"           : "sukses",
             "algoritma_terbaik": best_algo,
-            "metrik": df_eval.to_dict('records'),
-            "jam_mulai": f"{str(jam_sekarang + 1).zfill(2)}:00",
-            "prediksi_perjam": [
-                {"jam": jam_list[i], "knot": pred_knot[i]} for i in range(24)
+            "metrik"           : df_eval.to_dict('records'),
+            "jam_mulai"        : f"{str(jam_sekarang + 1).zfill(2)}:00",
+            "prediksi_perjam"  : [
+                {"jam": jam_list[i], "knot": pred_knot[i]}
+                for i in range(24)
             ]
         }
 
