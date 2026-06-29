@@ -5,7 +5,7 @@ import requests
 import pandas as pd
 import numpy as np
 from datetime import datetime, timezone, timedelta
-from sklearn.model_selection import train_test_split, GridSearchCV, cross_val_score
+from sklearn.model_selection import train_test_split, RandomizedSearchCV, cross_val_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LinearRegression
 from sklearn.tree import DecisionTreeRegressor
@@ -66,32 +66,34 @@ koordinat_bandara = {
 class RequestBandara(BaseModel):
     kota: str
 
-def tune_and_evaluate(name, model, param_grid, X_train_scaled, X_test_scaled, y_train, y_test, cv=5):
+def tune_and_evaluate(name, model, param_dist, X_train, X_test, y_train, y_test, n_iter=10, cv=3):
     """
-    Melakukan GridSearchCV + cross-validation pada model,
-    mengembalikan model terbaik beserta metriknya.
+    RandomizedSearchCV dengan n_iter kombinasi acak dan cv-fold.
+    Lebih cepat dari GridSearchCV karena tidak mencoba semua kombinasi.
     """
-    grid = GridSearchCV(
+    search = RandomizedSearchCV(
         estimator=model,
-        param_grid=param_grid,
+        param_distributions=param_dist,
+        n_iter=n_iter,
         scoring='neg_root_mean_squared_error',
         cv=cv,
+        random_state=42,
         n_jobs=-1,
         refit=True
     )
-    grid.fit(X_train_scaled, y_train)
-    best_model = grid.best_estimator_
-    best_params = grid.best_params_
+    search.fit(X_train, y_train)
+    best_model  = search.best_estimator_
+    best_params = search.best_params_
 
     # Evaluasi pada data uji
-    pred = best_model.predict(X_test_scaled)
-    rmse = np.sqrt(mean_squared_error(y_test, pred))
-    mae  = mean_absolute_error(y_test, pred)
-    r2   = r2_score(y_test, pred)
+    pred = best_model.predict(X_test)
+    rmse = round(float(np.sqrt(mean_squared_error(y_test, pred))), 4)
+    mae  = round(float(mean_absolute_error(y_test, pred)), 4)
+    r2   = round(float(r2_score(y_test, pred)), 4)
 
-    # Cross-validation score pada data latih
-    cv_scores = cross_val_score(
-        best_model, X_train_scaled, y_train,
+    # Cross-validation score pada data latih (3-fold agar cepat)
+    cv_scores    = cross_val_score(
+        best_model, X_train, y_train,
         scoring='neg_root_mean_squared_error',
         cv=cv, n_jobs=-1
     )
@@ -101,9 +103,9 @@ def tune_and_evaluate(name, model, param_grid, X_train_scaled, X_test_scaled, y_
     return best_model, {
         "Model"        : name,
         "Best_Params"  : str(best_params),
-        "RMSE"         : round(rmse, 4),
-        "MAE"          : round(mae, 4),
-        "R2"           : round(r2, 4),
+        "RMSE"         : rmse,
+        "MAE"          : mae,
+        "R2"           : r2,
         "CV_RMSE_Mean" : cv_rmse_mean,
         "CV_RMSE_Std"  : cv_rmse_std,
     }
@@ -119,7 +121,7 @@ def proses_prediksi(req: RequestBandara):
         lon = koordinat_bandara[kota]["lon"]
 
         # ── 1. AMBIL DATA HISTORIS ──────────────────────────────────────
-        url_hist = "https://archive-api.open-meteo.com/v1/archive"
+        url_hist    = "https://archive-api.open-meteo.com/v1/archive"
         params_hist = {
             "latitude"  : lat, "longitude": lon,
             "start_date": "1996-01-01", "end_date": "2025-06-01",
@@ -139,19 +141,19 @@ def proses_prediksi(req: RequestBandara):
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=0.2, random_state=42
         )
-        scaler = StandardScaler()
+        scaler         = StandardScaler()
         X_train_scaled = scaler.fit_transform(X_train)
         X_test_scaled  = scaler.transform(X_test)
 
-        # ── 3. DEFINISI MODEL + GRID HYPERPARAMETER ─────────────────────
+        # ── 3. DEFINISI MODEL + DISTRIBUSI PARAMETER ────────────────────
+        # n_iter kecil (8-10) agar total waktu < 1 menit
         model_configs = [
             (
                 "Linear Regression",
                 LinearRegression(),
-                {
-                    "fit_intercept": [True, False],
-                    "positive"     : [False]
-                }
+                {"fit_intercept": [True, False]},
+                2,   # n_iter
+                3    # cv
             ),
             (
                 "Decision Tree",
@@ -160,29 +162,35 @@ def proses_prediksi(req: RequestBandara):
                     "max_depth"        : [3, 5, 10, None],
                     "min_samples_split": [2, 5, 10],
                     "min_samples_leaf" : [1, 2, 4],
-                    "max_features"     : ["sqrt", "log2", None]
-                }
+                    "max_features"     : ["sqrt", "log2", None],
+                },
+                8,   # n_iter: coba 8 kombinasi acak
+                3    # cv
             ),
             (
                 "Random Forest",
                 RandomForestRegressor(random_state=42, n_jobs=-1),
                 {
-                    "n_estimators"     : [100, 200, 300],
+                    "n_estimators"     : [50, 100, 150],
                     "max_depth"        : [5, 10, None],
                     "min_samples_split": [2, 5],
                     "min_samples_leaf" : [1, 2],
-                    "max_features"     : ["sqrt", "log2"]
-                }
+                    "max_features"     : ["sqrt", "log2"],
+                },
+                8,   # n_iter
+                3    # cv
             ),
             (
                 "SVM (SVR)",
                 SVR(),
                 {
-                    "kernel"  : ["rbf", "linear", "poly"],
-                    "C"       : [0.1, 1, 10, 100],
-                    "epsilon" : [0.01, 0.1, 0.5],
-                    "gamma"   : ["scale", "auto"]
-                }
+                    "kernel" : ["rbf", "linear"],
+                    "C"      : [0.1, 1, 10, 100],
+                    "epsilon": [0.01, 0.1, 0.5],
+                    "gamma"  : ["scale", "auto"],
+                },
+                10,  # n_iter
+                3    # cv
             ),
         ]
 
@@ -190,32 +198,32 @@ def proses_prediksi(req: RequestBandara):
         metrics        = []
         trained_models = {}
 
-        for name, model, param_grid in model_configs:
+        for name, model, param_dist, n_iter, cv in model_configs:
             best_model, metric = tune_and_evaluate(
-                name, model, param_grid,
+                name, model, param_dist,
                 X_train_scaled, X_test_scaled,
                 y_train, y_test,
-                cv=5
+                n_iter=n_iter, cv=cv
             )
             metrics.append(metric)
             trained_models[name] = best_model
 
         # ── 5. PILIH MODEL TERBAIK (RMSE TERENDAH) ─────────────────────
-        df_eval   = pd.DataFrame(metrics)
-        best_algo = df_eval.loc[df_eval['RMSE'].idxmin(), 'Model']
+        df_eval    = pd.DataFrame(metrics)
+        best_algo  = df_eval.loc[df_eval['RMSE'].idxmin(), 'Model']
         best_model = trained_models[best_algo]
 
         # ── 6. AMBIL DATA PRAKIRAAN PER JAM ────────────────────────────
-        tz_jakarta = timezone(timedelta(hours=7))
-        now        = datetime.now(tz_jakarta)
+        tz_jakarta   = timezone(timedelta(hours=7))
+        now          = datetime.now(tz_jakarta)
         jam_sekarang = now.hour
 
-        url_fore = "https://api.open-meteo.com/v1/forecast"
+        url_fore    = "https://api.open-meteo.com/v1/forecast"
         params_fore = {
-            "latitude"    : lat, "longitude": lon,
-            "hourly"      : "precipitation,temperature_2m,"
-                            "relative_humidity_2m,surface_pressure",
-            "timezone"    : "Asia/Jakarta",
+            "latitude"     : lat, "longitude": lon,
+            "hourly"       : "precipitation,temperature_2m,"
+                             "relative_humidity_2m,surface_pressure",
+            "timezone"     : "Asia/Jakarta",
             "forecast_days": 3
         }
         res_fore = requests.get(url_fore, params=params_fore).json()
@@ -233,7 +241,7 @@ def proses_prediksi(req: RequestBandara):
             "surface_pressure_mean"   : all_press [index_mulai:index_mulai+24],
         })
 
-        # ── 7. PREDIKSI & KONVERSI ──────────────────────────────────────
+        # ── 7. PREDIKSI & KONVERSI KM/JAM → KNOT ──────────────────────
         X_fore_scaled = scaler.transform(df_fore)
         pred_kmh      = best_model.predict(X_fore_scaled)
         pred_knot     = [round(float(v) * 0.539957, 2) for v in pred_kmh]
