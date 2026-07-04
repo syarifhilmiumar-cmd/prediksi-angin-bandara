@@ -67,7 +67,6 @@ class RequestBandara(BaseModel):
     kota: str
 
 def fetch_hourly(lat, lon, start, end):
-    """Ambil data historis per jam dari Open-Meteo Archive API."""
     url = "https://archive-api.open-meteo.com/v1/archive"
     params = {
         "latitude"  : lat, "longitude": lon,
@@ -77,12 +76,11 @@ def fetch_hourly(lat, lon, start, end):
                       "surface_pressure",
         "timezone"  : "Asia/Jakarta"
     }
-    res = requests.get(url, params=params).json()
+    res = requests.get(url, params=params, timeout=30).json()
     return pd.DataFrame(res["hourly"])
 
 def tune_and_evaluate(name, model, param_dist, X_train, X_test,
-                      y_train, y_test, n_iter=8, cv=3):
-    """RandomizedSearchCV + cross-validation."""
+                      y_train, y_test, n_iter=6, cv=3):
     search = RandomizedSearchCV(
         estimator=model,
         param_distributions=param_dist,
@@ -94,7 +92,7 @@ def tune_and_evaluate(name, model, param_dist, X_train, X_test,
         refit=True
     )
     search.fit(X_train, y_train)
-    best_model  = search.best_estimator_
+    best_model = search.best_estimator_
 
     pred = best_model.predict(X_test)
     rmse = round(float(np.sqrt(mean_squared_error(y_test, pred))), 4)
@@ -129,31 +127,29 @@ def proses_prediksi(req: RequestBandara):
         lat = koordinat_bandara[kota]["lat"]
         lon = koordinat_bandara[kota]["lon"]
 
-        # ── 1. AMBIL DATA HISTORIS PER JAM (30 TAHUN, 3 REQUEST) ───────
-        df1 = fetch_hourly(lat, lon, "1996-01-01", "2005-12-31")
-        df2 = fetch_hourly(lat, lon, "2006-01-01", "2015-12-31")
-        df3 = fetch_hourly(lat, lon, "2016-01-01", "2025-06-01")
-        df_full = pd.concat([df1, df2, df3], ignore_index=True).dropna()
+        # ── 1. AMBIL DATA HISTORIS PER JAM (30 TAHUN, 2 REQUEST) ───────
+        df1 = fetch_hourly(lat, lon, "1996-01-01", "2010-12-31")
+        df2 = fetch_hourly(lat, lon, "2011-01-01", "2025-06-01")
+        df_full = pd.concat([df1, df2], ignore_index=True).dropna()
 
-        # ── 2. STRATIFIED SAMPLING 20% ─────────────────────────────────
-        # Bagi wind_speed_10m menjadi 5 bin untuk sampling stratified
-        # Ini memastikan distribusi data tetap representatif
-        # meskipun hanya menggunakan 20% dari total data (~52.000 baris)
+        # ── 2. STRATIFIED SAMPLING 15% ─────────────────────────────────
+        # Distribusi kecepatan angin dibagi 5 bin (qcut)
+        # Sampling 15% per bin → ~39.000 baris, tetap representatif
         df_full['speed_bin'] = pd.qcut(
-    df_full['wind_speed_10m'],
-    q=5,
-    labels=False,
-    duplicates='drop'
-)
-df = df_full.groupby('speed_bin', group_keys=False).apply(
-    lambda x: x.sample(frac=0.20, random_state=42)
-).reset_index(drop=True)
+            df_full['wind_speed_10m'],
+            q=5,
+            labels=False,
+            duplicates='drop'
+        )
+        df = df_full.groupby('speed_bin', group_keys=False).apply(
+            lambda x: x.sample(frac=0.15, random_state=42)
+        ).reset_index(drop=True)
 
-# Hapus kolom speed_bin setelah sampling selesai
-if 'speed_bin' in df.columns:
-    df = df.drop(columns=['speed_bin'])
+        # Hapus kolom speed_bin
+        if 'speed_bin' in df.columns:
+            df = df.drop(columns=['speed_bin'])
 
-        # ── 3. FITUR & TARGET (RESOLUSI PER JAM, KONSISTEN) ────────────
+        # ── 3. FITUR & TARGET ───────────────────────────────────────────
         X = df[['precipitation', 'temperature_2m',
                  'relative_humidity_2m', 'surface_pressure']]
         y = df['wind_speed_10m']
@@ -166,7 +162,7 @@ if 'speed_bin' in df.columns:
         X_train_scaled = scaler.fit_transform(X_train)
         X_test_scaled  = scaler.transform(X_test)
 
-        # ── 5. DEFINISI MODEL + DISTRIBUSI PARAMETER ────────────────────
+        # ── 5. MODEL + HYPERPARAMETER ───────────────────────────────────
         model_configs = [
             (
                 "Linear Regression",
@@ -183,19 +179,19 @@ if 'speed_bin' in df.columns:
                     "min_samples_leaf" : [1, 2, 4],
                     "max_features"     : ["sqrt", "log2", None],
                 },
-                8, 3
+                6, 3
             ),
             (
                 "Random Forest",
                 RandomForestRegressor(random_state=42, n_jobs=-1),
                 {
-                    "n_estimators"     : [50, 100, 150],
+                    "n_estimators"     : [50, 100],
                     "max_depth"        : [5, 10, None],
                     "min_samples_split": [2, 5],
                     "min_samples_leaf" : [1, 2],
                     "max_features"     : ["sqrt", "log2"],
                 },
-                8, 3
+                6, 3
             ),
             (
                 "SVM (SVR)",
@@ -206,7 +202,7 @@ if 'speed_bin' in df.columns:
                     "epsilon": [0.01, 0.1, 0.5],
                     "gamma"  : ["scale", "auto"],
                 },
-                8, 3
+                6, 3
             ),
         ]
 
@@ -224,12 +220,12 @@ if 'speed_bin' in df.columns:
             metrics.append(metric)
             trained_models[name] = best_model
 
-        # ── 7. PILIH MODEL TERBAIK (RMSE TERENDAH) ─────────────────────
+        # ── 7. PILIH MODEL TERBAIK ──────────────────────────────────────
         df_eval    = pd.DataFrame(metrics)
         best_algo  = df_eval.loc[df_eval['RMSE'].idxmin(), 'Model']
         best_model = trained_models[best_algo]
 
-        # ── 8. AMBIL DATA PRAKIRAAN PER JAM ────────────────────────────
+        # ── 8. PRAKIRAAN PER JAM ────────────────────────────────────────
         tz_jakarta   = timezone(timedelta(hours=7))
         now          = datetime.now(tz_jakarta)
         jam_sekarang = now.hour
@@ -242,22 +238,22 @@ if 'speed_bin' in df.columns:
             "timezone"     : "Asia/Jakarta",
             "forecast_days": 3
         }
-        res_fore    = requests.get(url_fore, params=params_fore).json()
+        res_fore    = requests.get(url_fore, params=params_fore, timeout=15).json()
         index_mulai = jam_sekarang + 1
 
         df_fore = pd.DataFrame({
-            "precipitation"       : res_fore['hourly']['precipitation']   [index_mulai:index_mulai+24],
-            "temperature_2m"      : res_fore['hourly']['temperature_2m']  [index_mulai:index_mulai+24],
+            "precipitation"       : res_fore['hourly']['precipitation']      [index_mulai:index_mulai+24],
+            "temperature_2m"      : res_fore['hourly']['temperature_2m']     [index_mulai:index_mulai+24],
             "relative_humidity_2m": res_fore['hourly']['relative_humidity_2m'][index_mulai:index_mulai+24],
-            "surface_pressure"    : res_fore['hourly']['surface_pressure'][index_mulai:index_mulai+24],
+            "surface_pressure"    : res_fore['hourly']['surface_pressure']   [index_mulai:index_mulai+24],
         })
 
-        # ── 9. PREDIKSI & KONVERSI KM/JAM → KNOT ──────────────────────
+        # ── 9. PREDIKSI & KONVERSI ──────────────────────────────────────
         X_fore_scaled = scaler.transform(df_fore)
         pred_kmh      = best_model.predict(X_fore_scaled)
         pred_knot     = [round(float(v) * 0.539957, 2) for v in pred_kmh]
 
-        # ── 10. LABEL JAM DINAMIS ───────────────────────────────────────
+        # ── 10. LABEL JAM ───────────────────────────────────────────────
         jam_list = []
         for i in range(24):
             total = jam_sekarang + 1 + i
@@ -266,15 +262,15 @@ if 'speed_bin' in df.columns:
             label = "Hari ini" if hari == 0 else "Besok" if hari == 1 else "Lusa"
             jam_list.append(f"{str(jam).zfill(2)}:00 ({label})")
 
-        # ── 11. RETURN RESPONSE ─────────────────────────────────────────
+        # ── 11. RESPONSE ────────────────────────────────────────────────
         return {
-            "status"           : "sukses",
+            "status"          : "sukses",
             "algoritma_terbaik": best_algo,
-            "metrik"           : df_eval.to_dict('records'),
-            "jam_mulai"        : f"{str(jam_sekarang + 1).zfill(2)}:00",
-            "total_data"       : len(df_full),
-            "data_training"    : len(df),
-            "prediksi_perjam"  : [
+            "metrik"          : df_eval.to_dict('records'),
+            "jam_mulai"       : f"{str(jam_sekarang + 1).zfill(2)}:00",
+            "total_data"      : len(df_full),
+            "data_training"   : len(df),
+            "prediksi_perjam" : [
                 {"jam": jam_list[i], "knot": pred_knot[i]}
                 for i in range(24)
             ]
