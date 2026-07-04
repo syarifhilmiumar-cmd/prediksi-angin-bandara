@@ -66,11 +66,23 @@ koordinat_bandara = {
 class RequestBandara(BaseModel):
     kota: str
 
-def tune_and_evaluate(name, model, param_dist, X_train, X_test, y_train, y_test, n_iter=10, cv=3):
-    """
-    RandomizedSearchCV dengan n_iter kombinasi acak dan cv-fold.
-    Lebih cepat dari GridSearchCV karena tidak mencoba semua kombinasi.
-    """
+def fetch_hourly(lat, lon, start, end):
+    """Ambil data historis per jam dari Open-Meteo Archive API."""
+    url = "https://archive-api.open-meteo.com/v1/archive"
+    params = {
+        "latitude"  : lat, "longitude": lon,
+        "start_date": start, "end_date": end,
+        "hourly"    : "wind_speed_10m,precipitation,"
+                      "temperature_2m,relative_humidity_2m,"
+                      "surface_pressure",
+        "timezone"  : "Asia/Jakarta"
+    }
+    res = requests.get(url, params=params).json()
+    return pd.DataFrame(res["hourly"])
+
+def tune_and_evaluate(name, model, param_dist, X_train, X_test,
+                      y_train, y_test, n_iter=8, cv=3):
+    """RandomizedSearchCV + cross-validation."""
     search = RandomizedSearchCV(
         estimator=model,
         param_distributions=param_dist,
@@ -83,15 +95,12 @@ def tune_and_evaluate(name, model, param_dist, X_train, X_test, y_train, y_test,
     )
     search.fit(X_train, y_train)
     best_model  = search.best_estimator_
-    best_params = search.best_params_
 
-    # Evaluasi pada data uji
     pred = best_model.predict(X_test)
     rmse = round(float(np.sqrt(mean_squared_error(y_test, pred))), 4)
     mae  = round(float(mean_absolute_error(y_test, pred)), 4)
     r2   = round(float(r2_score(y_test, pred)), 4)
 
-    # Cross-validation score pada data latih (3-fold agar cepat)
     cv_scores    = cross_val_score(
         best_model, X_train, y_train,
         scoring='neg_root_mean_squared_error',
@@ -102,7 +111,7 @@ def tune_and_evaluate(name, model, param_dist, X_train, X_test, y_train, y_test,
 
     return best_model, {
         "Model"        : name,
-        "Best_Params"  : str(best_params),
+        "Best_Params"  : str(search.best_params_),
         "RMSE"         : rmse,
         "MAE"          : mae,
         "R2"           : r2,
@@ -120,24 +129,32 @@ def proses_prediksi(req: RequestBandara):
         lat = koordinat_bandara[kota]["lat"]
         lon = koordinat_bandara[kota]["lon"]
 
-        # ── 1. AMBIL DATA HISTORIS ──────────────────────────────────────
-        url_hist    = "https://archive-api.open-meteo.com/v1/archive"
-        params_hist = {
-            "latitude"  : lat, "longitude": lon,
-            "start_date": "1996-01-01", "end_date": "2025-06-01",
-            "daily"     : "wind_speed_10m_max,precipitation_sum,"
-                          "temperature_2m_mean,relative_humidity_2m_max,"
-                          "surface_pressure_mean",
-            "timezone"  : "Asia/Jakarta"
-        }
-        res_hist = requests.get(url_hist, params=params_hist).json()
-        df = pd.DataFrame(res_hist["daily"]).dropna()
+        # ── 1. AMBIL DATA HISTORIS PER JAM (30 TAHUN, 3 REQUEST) ───────
+        df1 = fetch_hourly(lat, lon, "1996-01-01", "2005-12-31")
+        df2 = fetch_hourly(lat, lon, "2006-01-01", "2015-12-31")
+        df3 = fetch_hourly(lat, lon, "2016-01-01", "2025-06-01")
+        df_full = pd.concat([df1, df2, df3], ignore_index=True).dropna()
 
-        X = df[['precipitation_sum', 'temperature_2m_mean',
-                 'relative_humidity_2m_max', 'surface_pressure_mean']]
-        y = df['wind_speed_10m_max']
+        # ── 2. STRATIFIED SAMPLING 20% ─────────────────────────────────
+        # Bagi wind_speed_10m menjadi 5 bin untuk sampling stratified
+        # Ini memastikan distribusi data tetap representatif
+        # meskipun hanya menggunakan 20% dari total data (~52.000 baris)
+        df_full['speed_bin'] = pd.qcut(
+            df_full['wind_speed_10m'],
+            q=5,
+            labels=False,
+            duplicates='drop'
+        )
+        df = df_full.groupby('speed_bin', group_keys=False).apply(
+            lambda x: x.sample(frac=0.20, random_state=42)
+        ).drop(columns='speed_bin').reset_index(drop=True)
 
-        # ── 2. SPLIT & STANDARISASI ─────────────────────────────────────
+        # ── 3. FITUR & TARGET (RESOLUSI PER JAM, KONSISTEN) ────────────
+        X = df[['precipitation', 'temperature_2m',
+                 'relative_humidity_2m', 'surface_pressure']]
+        y = df['wind_speed_10m']
+
+        # ── 4. SPLIT & STANDARISASI ─────────────────────────────────────
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=0.2, random_state=42
         )
@@ -145,15 +162,13 @@ def proses_prediksi(req: RequestBandara):
         X_train_scaled = scaler.fit_transform(X_train)
         X_test_scaled  = scaler.transform(X_test)
 
-        # ── 3. DEFINISI MODEL + DISTRIBUSI PARAMETER ────────────────────
-        # n_iter kecil (8-10) agar total waktu < 1 menit
+        # ── 5. DEFINISI MODEL + DISTRIBUSI PARAMETER ────────────────────
         model_configs = [
             (
                 "Linear Regression",
                 LinearRegression(),
                 {"fit_intercept": [True, False]},
-                2,   # n_iter
-                3    # cv
+                2, 3
             ),
             (
                 "Decision Tree",
@@ -164,8 +179,7 @@ def proses_prediksi(req: RequestBandara):
                     "min_samples_leaf" : [1, 2, 4],
                     "max_features"     : ["sqrt", "log2", None],
                 },
-                8,   # n_iter: coba 8 kombinasi acak
-                3    # cv
+                8, 3
             ),
             (
                 "Random Forest",
@@ -177,8 +191,7 @@ def proses_prediksi(req: RequestBandara):
                     "min_samples_leaf" : [1, 2],
                     "max_features"     : ["sqrt", "log2"],
                 },
-                8,   # n_iter
-                3    # cv
+                8, 3
             ),
             (
                 "SVM (SVR)",
@@ -189,12 +202,11 @@ def proses_prediksi(req: RequestBandara):
                     "epsilon": [0.01, 0.1, 0.5],
                     "gamma"  : ["scale", "auto"],
                 },
-                10,  # n_iter
-                3    # cv
+                8, 3
             ),
         ]
 
-        # ── 4. TRAINING + TUNING + EVALUASI ────────────────────────────
+        # ── 6. TRAINING + TUNING + EVALUASI ────────────────────────────
         metrics        = []
         trained_models = {}
 
@@ -208,12 +220,12 @@ def proses_prediksi(req: RequestBandara):
             metrics.append(metric)
             trained_models[name] = best_model
 
-        # ── 5. PILIH MODEL TERBAIK (RMSE TERENDAH) ─────────────────────
+        # ── 7. PILIH MODEL TERBAIK (RMSE TERENDAH) ─────────────────────
         df_eval    = pd.DataFrame(metrics)
         best_algo  = df_eval.loc[df_eval['RMSE'].idxmin(), 'Model']
         best_model = trained_models[best_algo]
 
-        # ── 6. AMBIL DATA PRAKIRAAN PER JAM ────────────────────────────
+        # ── 8. AMBIL DATA PRAKIRAAN PER JAM ────────────────────────────
         tz_jakarta   = timezone(timedelta(hours=7))
         now          = datetime.now(tz_jakarta)
         jam_sekarang = now.hour
@@ -226,27 +238,22 @@ def proses_prediksi(req: RequestBandara):
             "timezone"     : "Asia/Jakarta",
             "forecast_days": 3
         }
-        res_fore = requests.get(url_fore, params=params_fore).json()
-
+        res_fore    = requests.get(url_fore, params=params_fore).json()
         index_mulai = jam_sekarang + 1
-        all_precip  = res_fore['hourly']['precipitation']
-        all_temp    = res_fore['hourly']['temperature_2m']
-        all_humid   = res_fore['hourly']['relative_humidity_2m']
-        all_press   = res_fore['hourly']['surface_pressure']
 
         df_fore = pd.DataFrame({
-            "precipitation_sum"       : all_precip[index_mulai:index_mulai+24],
-            "temperature_2m_mean"     : all_temp  [index_mulai:index_mulai+24],
-            "relative_humidity_2m_max": all_humid [index_mulai:index_mulai+24],
-            "surface_pressure_mean"   : all_press [index_mulai:index_mulai+24],
+            "precipitation"       : res_fore['hourly']['precipitation']   [index_mulai:index_mulai+24],
+            "temperature_2m"      : res_fore['hourly']['temperature_2m']  [index_mulai:index_mulai+24],
+            "relative_humidity_2m": res_fore['hourly']['relative_humidity_2m'][index_mulai:index_mulai+24],
+            "surface_pressure"    : res_fore['hourly']['surface_pressure'][index_mulai:index_mulai+24],
         })
 
-        # ── 7. PREDIKSI & KONVERSI KM/JAM → KNOT ──────────────────────
+        # ── 9. PREDIKSI & KONVERSI KM/JAM → KNOT ──────────────────────
         X_fore_scaled = scaler.transform(df_fore)
         pred_kmh      = best_model.predict(X_fore_scaled)
         pred_knot     = [round(float(v) * 0.539957, 2) for v in pred_kmh]
 
-        # ── 8. LABEL JAM DINAMIS ────────────────────────────────────────
+        # ── 10. LABEL JAM DINAMIS ───────────────────────────────────────
         jam_list = []
         for i in range(24):
             total = jam_sekarang + 1 + i
@@ -255,12 +262,14 @@ def proses_prediksi(req: RequestBandara):
             label = "Hari ini" if hari == 0 else "Besok" if hari == 1 else "Lusa"
             jam_list.append(f"{str(jam).zfill(2)}:00 ({label})")
 
-        # ── 9. RETURN RESPONSE ──────────────────────────────────────────
+        # ── 11. RETURN RESPONSE ─────────────────────────────────────────
         return {
             "status"           : "sukses",
             "algoritma_terbaik": best_algo,
             "metrik"           : df_eval.to_dict('records'),
             "jam_mulai"        : f"{str(jam_sekarang + 1).zfill(2)}:00",
+            "total_data"       : len(df_full),
+            "data_training"    : len(df),
             "prediksi_perjam"  : [
                 {"jam": jam_list[i], "knot": pred_knot[i]}
                 for i in range(24)
