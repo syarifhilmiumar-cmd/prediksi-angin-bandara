@@ -104,50 +104,47 @@ def proses_prediksi(req: RequestBandara):
         # ── 1. AMBIL DATA HISTORIS PER JAM (15 TAHUN) ──────────────────
         url_hist = "https://archive-api.open-meteo.com/v1/archive"
         params_hist = {
-            "latitude"  : lat, "longitude": lon,
-            "start_date": "2010-01-01", "end_date": "2025-06-01",
-            "hourly"    : "wind_speed_10m,precipitation,"
-                          "temperature_2m,relative_humidity_2m,"
-                          "surface_pressure",
+            "latitude"  : lat,
+            "longitude" : lon,
+            "start_date": "2010-01-01",
+            "end_date"  : "2025-06-01",
+            "hourly"    : "wind_speed_10m,precipitation,temperature_2m,relative_humidity_2m,surface_pressure",
             "timezone"  : "Asia/Jakarta"
         }
         res_hist = requests.get(url_hist, params=params_hist, timeout=25).json()
         df_full  = pd.DataFrame(res_hist["hourly"]).dropna()
 
         # ── 2. STRATIFIED OVERSAMPLE ────────────────────────────────────
-        # Bin angin kencang (3 & 4) diambil 50%, bin lain 20%
-        # agar kejadian angin ekstrem lebih terwakili dalam training
         df_full['speed_bin'] = pd.qcut(
             df_full['wind_speed_10m'],
-            q=5, labels=False, duplicates='drop'
+            q=5,
+            labels=False,
+            duplicates='drop'
         )
 
-        def stratified_oversample(group):
-            bin_id = group['speed_bin'].iloc[0]
-            frac = 0.50 if bin_id >= 3 else 0.20
-            return group.sample(frac=frac, random_state=42)
+        frames = []
+        for bin_id in sorted(df_full['speed_bin'].dropna().unique()):
+            subset = df_full[df_full['speed_bin'] == bin_id].copy()
+            frac   = 0.50 if bin_id >= 3 else 0.20
+            frames.append(subset.sample(frac=frac, random_state=42))
 
-        df = df_full.groupby(
-            'speed_bin', group_keys=False
-        ).apply(stratified_oversample).reset_index(drop=True)
-
-        if 'speed_bin' in df.columns:
-            df = df.drop(columns=['speed_bin'])
+        df = pd.concat(frames, ignore_index=True)
+        df = df.drop(columns=['speed_bin'])
 
         # ── 3. FITUR & TARGET ───────────────────────────────────────────
         X = df[['precipitation', 'temperature_2m',
-                 'relative_humidity_2m', 'surface_pressure']]
+                'relative_humidity_2m', 'surface_pressure']]
         y = df['wind_speed_10m']
 
         # ── 4. SPLIT & STANDARISASI ─────────────────────────────────────
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=0.2, random_state=42
         )
-        scaler = StandardScaler()
+        scaler         = StandardScaler()
         X_train_scaled = scaler.fit_transform(X_train)
         X_test_scaled  = scaler.transform(X_test)
 
-        # ── 5. INISIALISASI MODEL DENGAN HYPERPARAMETER PRE-TUNED ───────
+        # ── 5. MODEL DENGAN HYPERPARAMETER PRE-TUNED ────────────────────
         models = {
             "Linear Regression": LinearRegression(
                 **BEST_PARAMS["Linear Regression"]
@@ -176,7 +173,7 @@ def proses_prediksi(req: RequestBandara):
             mae  = round(float(mean_absolute_error(y_test, pred)), 4)
             r2   = round(float(r2_score(y_test, pred)), 4)
 
-            cv_scores = cross_val_score(
+            cv_scores    = cross_val_score(
                 model, X_train_scaled, y_train,
                 scoring='neg_root_mean_squared_error',
                 cv=3, n_jobs=-1
@@ -206,9 +203,9 @@ def proses_prediksi(req: RequestBandara):
 
         url_fore = "https://api.open-meteo.com/v1/forecast"
         params_fore = {
-            "latitude"     : lat, "longitude": lon,
-            "hourly"       : "precipitation,temperature_2m,"
-                             "relative_humidity_2m,surface_pressure",
+            "latitude"     : lat,
+            "longitude"    : lon,
+            "hourly"       : "precipitation,temperature_2m,relative_humidity_2m,surface_pressure",
             "timezone"     : "Asia/Jakarta",
             "forecast_days": 3
         }
@@ -216,10 +213,10 @@ def proses_prediksi(req: RequestBandara):
         index_mulai = jam_sekarang + 1
 
         df_fore = pd.DataFrame({
-            "precipitation"       : res_fore['hourly']['precipitation']         [index_mulai:index_mulai+24],
-            "temperature_2m"      : res_fore['hourly']['temperature_2m']        [index_mulai:index_mulai+24],
-            "relative_humidity_2m": res_fore['hourly']['relative_humidity_2m']  [index_mulai:index_mulai+24],
-            "surface_pressure"    : res_fore['hourly']['surface_pressure']      [index_mulai:index_mulai+24],
+            "precipitation"       : res_fore['hourly']['precipitation']        [index_mulai:index_mulai+24],
+            "temperature_2m"      : res_fore['hourly']['temperature_2m']       [index_mulai:index_mulai+24],
+            "relative_humidity_2m": res_fore['hourly']['relative_humidity_2m'] [index_mulai:index_mulai+24],
+            "surface_pressure"    : res_fore['hourly']['surface_pressure']     [index_mulai:index_mulai+24],
         })
 
         # ── 9. PREDIKSI & KONVERSI ──────────────────────────────────────
