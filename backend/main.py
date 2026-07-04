@@ -140,14 +140,18 @@ def proses_prediksi(req: RequestBandara):
         # Ini memastikan distribusi data tetap representatif
         # meskipun hanya menggunakan 20% dari total data (~52.000 baris)
         df_full['speed_bin'] = pd.qcut(
-            df_full['wind_speed_10m'],
-            q=5,
-            labels=False,
-            duplicates='drop'
-        )
-        df = df_full.groupby('speed_bin', group_keys=False).apply(
-            lambda x: x.sample(frac=0.20, random_state=42)
-        ).drop(columns='speed_bin').reset_index(drop=True)
+    df_full['wind_speed_10m'],
+    q=5,
+    labels=False,
+    duplicates='drop'
+)
+df = df_full.groupby('speed_bin', group_keys=False).apply(
+    lambda x: x.sample(frac=0.20, random_state=42)
+).reset_index(drop=True)
+
+# Hapus kolom speed_bin setelah sampling selesai
+if 'speed_bin' in df.columns:
+    df = df.drop(columns=['speed_bin'])
 
         # ── 3. FITUR & TARGET (RESOLUSI PER JAM, KONSISTEN) ────────────
         X = df[['precipitation', 'temperature_2m',
