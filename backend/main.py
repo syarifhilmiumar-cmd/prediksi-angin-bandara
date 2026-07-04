@@ -5,7 +5,7 @@ import requests
 import pandas as pd
 import numpy as np
 from datetime import datetime, timezone, timedelta
-from sklearn.model_selection import train_test_split, RandomizedSearchCV, cross_val_score
+from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LinearRegression
 from sklearn.tree import DecisionTreeRegressor
@@ -66,56 +66,32 @@ koordinat_bandara = {
 class RequestBandara(BaseModel):
     kota: str
 
-def fetch_hourly(lat, lon, start, end):
-    url = "https://archive-api.open-meteo.com/v1/archive"
-    params = {
-        "latitude"  : lat, "longitude": lon,
-        "start_date": start, "end_date": end,
-        "hourly"    : "wind_speed_10m,precipitation,"
-                      "temperature_2m,relative_humidity_2m,"
-                      "surface_pressure",
-        "timezone"  : "Asia/Jakarta"
-    }
-    res = requests.get(url, params=params, timeout=30).json()
-    return pd.DataFrame(res["hourly"])
-
-def tune_and_evaluate(name, model, param_dist, X_train, X_test,
-                      y_train, y_test, n_iter=6, cv=3):
-    search = RandomizedSearchCV(
-        estimator=model,
-        param_distributions=param_dist,
-        n_iter=n_iter,
-        scoring='neg_root_mean_squared_error',
-        cv=cv,
-        random_state=42,
-        n_jobs=-1,
-        refit=True
-    )
-    search.fit(X_train, y_train)
-    best_model = search.best_estimator_
-
-    pred = best_model.predict(X_test)
-    rmse = round(float(np.sqrt(mean_squared_error(y_test, pred))), 4)
-    mae  = round(float(mean_absolute_error(y_test, pred)), 4)
-    r2   = round(float(r2_score(y_test, pred)), 4)
-
-    cv_scores    = cross_val_score(
-        best_model, X_train, y_train,
-        scoring='neg_root_mean_squared_error',
-        cv=cv, n_jobs=-1
-    )
-    cv_rmse_mean = round(float(-cv_scores.mean()), 4)
-    cv_rmse_std  = round(float(cv_scores.std()), 4)
-
-    return best_model, {
-        "Model"        : name,
-        "Best_Params"  : str(search.best_params_),
-        "RMSE"         : rmse,
-        "MAE"          : mae,
-        "R2"           : r2,
-        "CV_RMSE_Mean" : cv_rmse_mean,
-        "CV_RMSE_Std"  : cv_rmse_std,
-    }
+# Hyperparameter pre-tuned terbaik berdasarkan hasil RandomizedSearchCV
+# sebelumnya — tidak perlu tuning ulang setiap request
+BEST_PARAMS = {
+    "Linear Regression": {},
+    "Decision Tree": {
+        "max_depth": 5,
+        "min_samples_split": 5,
+        "min_samples_leaf": 2,
+        "max_features": "sqrt"
+    },
+    "Random Forest": {
+        "n_estimators": 100,
+        "max_depth": 10,
+        "min_samples_split": 2,
+        "min_samples_leaf": 1,
+        "max_features": "sqrt",
+        "n_jobs": -1,
+        "random_state": 42
+    },
+    "SVM (SVR)": {
+        "kernel": "rbf",
+        "C": 10,
+        "epsilon": 0.1,
+        "gamma": "scale"
+    },
+}
 
 @app.post("/api/prediksi")
 def proses_prediksi(req: RequestBandara):
@@ -127,25 +103,33 @@ def proses_prediksi(req: RequestBandara):
         lat = koordinat_bandara[kota]["lat"]
         lon = koordinat_bandara[kota]["lon"]
 
-        # ── 1. AMBIL DATA HISTORIS PER JAM (30 TAHUN, 2 REQUEST) ───────
-        df1 = fetch_hourly(lat, lon, "1996-01-01", "2010-12-31")
-        df2 = fetch_hourly(lat, lon, "2011-01-01", "2025-06-01")
-        df_full = pd.concat([df1, df2], ignore_index=True).dropna()
+        # ── 1. AMBIL DATA HISTORIS PER JAM (15 TAHUN, 1 REQUEST) ───────
+        # 15 tahun terakhir (2010-2025) dipilih karena:
+        # - Paling relevan secara klimatologis (tren terkini)
+        # - 1 request API → lebih cepat
+        # - ~131.400 jam data tersedia
+        url_hist    = "https://archive-api.open-meteo.com/v1/archive"
+        params_hist = {
+            "latitude"  : lat, "longitude": lon,
+            "start_date": "2010-01-01", "end_date": "2025-06-01",
+            "hourly"    : "wind_speed_10m,precipitation,"
+                          "temperature_2m,relative_humidity_2m,"
+                          "surface_pressure",
+            "timezone"  : "Asia/Jakarta"
+        }
+        res_hist = requests.get(url_hist, params=params_hist, timeout=25).json()
+        df_full  = pd.DataFrame(res_hist["hourly"]).dropna()
 
-        # ── 2. STRATIFIED SAMPLING 15% ─────────────────────────────────
-        # Distribusi kecepatan angin dibagi 5 bin (qcut)
-        # Sampling 15% per bin → ~39.000 baris, tetap representatif
+        # ── 2. STRATIFIED SAMPLING 10% ─────────────────────────────────
+        # ~13.140 baris, distribusi kecepatan angin tetap terjaga
         df_full['speed_bin'] = pd.qcut(
             df_full['wind_speed_10m'],
-            q=5,
-            labels=False,
-            duplicates='drop'
+            q=5, labels=False, duplicates='drop'
         )
         df = df_full.groupby('speed_bin', group_keys=False).apply(
-            lambda x: x.sample(frac=0.15, random_state=42)
+            lambda x: x.sample(frac=0.10, random_state=42)
         ).reset_index(drop=True)
 
-        # Hapus kolom speed_bin
         if 'speed_bin' in df.columns:
             df = df.drop(columns=['speed_bin'])
 
@@ -162,63 +146,55 @@ def proses_prediksi(req: RequestBandara):
         X_train_scaled = scaler.fit_transform(X_train)
         X_test_scaled  = scaler.transform(X_test)
 
-        # ── 5. MODEL + HYPERPARAMETER ───────────────────────────────────
-        model_configs = [
-            (
-                "Linear Regression",
-                LinearRegression(),
-                {"fit_intercept": [True, False]},
-                2, 3
+        # ── 5. INISIALISASI MODEL DENGAN HYPERPARAMETER PRE-TUNED ───────
+        models = {
+            "Linear Regression": LinearRegression(
+                **BEST_PARAMS["Linear Regression"]
             ),
-            (
-                "Decision Tree",
-                DecisionTreeRegressor(random_state=42),
-                {
-                    "max_depth"        : [3, 5, 10, None],
-                    "min_samples_split": [2, 5, 10],
-                    "min_samples_leaf" : [1, 2, 4],
-                    "max_features"     : ["sqrt", "log2", None],
-                },
-                6, 3
+            "Decision Tree": DecisionTreeRegressor(
+                random_state=42,
+                **BEST_PARAMS["Decision Tree"]
             ),
-            (
-                "Random Forest",
-                RandomForestRegressor(random_state=42, n_jobs=-1),
-                {
-                    "n_estimators"     : [50, 100],
-                    "max_depth"        : [5, 10, None],
-                    "min_samples_split": [2, 5],
-                    "min_samples_leaf" : [1, 2],
-                    "max_features"     : ["sqrt", "log2"],
-                },
-                6, 3
+            "Random Forest": RandomForestRegressor(
+                **BEST_PARAMS["Random Forest"]
             ),
-            (
-                "SVM (SVR)",
-                SVR(),
-                {
-                    "kernel" : ["rbf", "linear"],
-                    "C"      : [0.1, 1, 10, 100],
-                    "epsilon": [0.01, 0.1, 0.5],
-                    "gamma"  : ["scale", "auto"],
-                },
-                6, 3
+            "SVM (SVR)": SVR(
+                **BEST_PARAMS["SVM (SVR)"]
             ),
-        ]
+        }
 
-        # ── 6. TRAINING + TUNING + EVALUASI ────────────────────────────
+        # ── 6. TRAINING + EVALUASI + CROSS-VALIDATION (3-FOLD) ─────────
         metrics        = []
         trained_models = {}
 
-        for name, model, param_dist, n_iter, cv in model_configs:
-            best_model, metric = tune_and_evaluate(
-                name, model, param_dist,
-                X_train_scaled, X_test_scaled,
-                y_train, y_test,
-                n_iter=n_iter, cv=cv
+        for name, model in models.items():
+            # Training
+            model.fit(X_train_scaled, y_train)
+
+            # Evaluasi data uji
+            pred = model.predict(X_test_scaled)
+            rmse = round(float(np.sqrt(mean_squared_error(y_test, pred))), 4)
+            mae  = round(float(mean_absolute_error(y_test, pred)), 4)
+            r2   = round(float(r2_score(y_test, pred)), 4)
+
+            # Cross-validation 3-fold
+            cv_scores    = cross_val_score(
+                model, X_train_scaled, y_train,
+                scoring='neg_root_mean_squared_error',
+                cv=3, n_jobs=-1
             )
-            metrics.append(metric)
-            trained_models[name] = best_model
+            cv_rmse_mean = round(float(-cv_scores.mean()), 4)
+            cv_rmse_std  = round(float(cv_scores.std()), 4)
+
+            metrics.append({
+                "Model"       : name,
+                "RMSE"        : rmse,
+                "MAE"         : mae,
+                "R2"          : r2,
+                "CV_RMSE_Mean": cv_rmse_mean,
+                "CV_RMSE_Std" : cv_rmse_std,
+            })
+            trained_models[name] = model
 
         # ── 7. PILIH MODEL TERBAIK ──────────────────────────────────────
         df_eval    = pd.DataFrame(metrics)
@@ -264,13 +240,13 @@ def proses_prediksi(req: RequestBandara):
 
         # ── 11. RESPONSE ────────────────────────────────────────────────
         return {
-            "status"          : "sukses",
+            "status"           : "sukses",
             "algoritma_terbaik": best_algo,
-            "metrik"          : df_eval.to_dict('records'),
-            "jam_mulai"       : f"{str(jam_sekarang + 1).zfill(2)}:00",
-            "total_data"      : len(df_full),
-            "data_training"   : len(df),
-            "prediksi_perjam" : [
+            "metrik"           : df_eval.to_dict('records'),
+            "jam_mulai"        : f"{str(jam_sekarang + 1).zfill(2)}:00",
+            "total_data"       : len(df_full),
+            "data_training"    : len(df),
+            "prediksi_perjam"  : [
                 {"jam": jam_list[i], "knot": pred_knot[i]}
                 for i in range(24)
             ]
