@@ -80,7 +80,7 @@ def proses_prediksi(req: RequestBandara):
         url_hist = "https://archive-api.open-meteo.com/v1/archive"
         params_hist = {
             "latitude": lat, "longitude": lon,
-            "start_date": "1996-01-01", "end_date": "2026-04-26",
+            "start_date": "1996-01-01", "end_date": "2026-07-01",
             "daily": "wind_speed_10m_max,precipitation_sum,temperature_2m_mean,relative_humidity_2m_max,surface_pressure_mean",
             "timezone": "Asia/Jakarta"
         }
