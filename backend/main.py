@@ -101,30 +101,29 @@ def proses_prediksi(req: RequestBandara):
         lat = koordinat_bandara[kota]["lat"]
         lon = koordinat_bandara[kota]["lon"]
 
-        # ── 1. AMBIL DATA HISTORIS PER JAM (15 TAHUN) ──────────────────
+        # ── 1. DATA HISTORIS HARIAN 30 TAHUN ───────────────────────────
+        # Menggunakan wind_speed_10m_max (nilai maksimum harian)
+        # sebagai target — lebih relevan untuk keselamatan penerbangan
+        # dan konsisten dengan fitur prakiraan harian
         url_hist = "https://archive-api.open-meteo.com/v1/archive"
         params_hist = {
             "latitude"  : lat,
             "longitude" : lon,
-            "start_date": "2010-01-01",
+            "start_date": "1996-01-01",
             "end_date"  : "2025-06-01",
-            "hourly"    : "wind_speed_10m,precipitation,temperature_2m,relative_humidity_2m,surface_pressure",
+            "daily"     : "wind_speed_10m_max,precipitation_sum,"
+                          "temperature_2m_mean,relative_humidity_2m_max,"
+                          "surface_pressure_mean",
             "timezone"  : "Asia/Jakarta"
         }
-        # Retry otomatis maksimal 3 kali jika timeout
-for attempt in range(3):
-    try:
-        res_hist = requests.get(url_hist, params=params_hist, timeout=60).json()
-        break
-    except requests.exceptions.Timeout:
-        if attempt == 2:
-            return {"error": "Server data historis tidak merespons. Coba lagi beberapa saat."}
-        continue
-        df_full  = pd.DataFrame(res_hist["hourly"]).dropna()
+        res_hist = requests.get(url_hist, params=params_hist, timeout=30).json()
+        df_full  = pd.DataFrame(res_hist["daily"]).dropna()
 
         # ── 2. STRATIFIED OVERSAMPLE ────────────────────────────────────
+        # Bin angin kencang (3 & 4) diambil 50%, bin lain 20%
+        # agar kejadian angin ekstrem lebih terwakili dalam training
         df_full['speed_bin'] = pd.qcut(
-            df_full['wind_speed_10m'],
+            df_full['wind_speed_10m_max'],
             q=5,
             labels=False,
             duplicates='drop'
@@ -140,9 +139,11 @@ for attempt in range(3):
         df = df.drop(columns=['speed_bin'])
 
         # ── 3. FITUR & TARGET ───────────────────────────────────────────
-        X = df[['precipitation', 'temperature_2m',
-                'relative_humidity_2m', 'surface_pressure']]
-        y = df['wind_speed_10m']
+        # X: 4 variabel meteorologi harian
+        # y: kecepatan angin maksimum harian (km/jam)
+        X = df[['precipitation_sum', 'temperature_2m_mean',
+                 'relative_humidity_2m_max', 'surface_pressure_mean']]
+        y = df['wind_speed_10m_max']
 
         # ── 4. SPLIT & STANDARISASI ─────────────────────────────────────
         X_train, X_test, y_train, y_test = train_test_split(
@@ -213,7 +214,8 @@ for attempt in range(3):
         params_fore = {
             "latitude"     : lat,
             "longitude"    : lon,
-            "hourly"       : "precipitation,temperature_2m,relative_humidity_2m,surface_pressure",
+            "hourly"       : "precipitation,temperature_2m,"
+                             "relative_humidity_2m,surface_pressure",
             "timezone"     : "Asia/Jakarta",
             "forecast_days": 3
         }
@@ -221,10 +223,10 @@ for attempt in range(3):
         index_mulai = jam_sekarang + 1
 
         df_fore = pd.DataFrame({
-            "precipitation"       : res_fore['hourly']['precipitation']        [index_mulai:index_mulai+24],
-            "temperature_2m"      : res_fore['hourly']['temperature_2m']       [index_mulai:index_mulai+24],
-            "relative_humidity_2m": res_fore['hourly']['relative_humidity_2m'] [index_mulai:index_mulai+24],
-            "surface_pressure"    : res_fore['hourly']['surface_pressure']     [index_mulai:index_mulai+24],
+            "precipitation_sum"       : res_fore['hourly']['precipitation']        [index_mulai:index_mulai+24],
+            "temperature_2m_mean"     : res_fore['hourly']['temperature_2m']       [index_mulai:index_mulai+24],
+            "relative_humidity_2m_max": res_fore['hourly']['relative_humidity_2m'] [index_mulai:index_mulai+24],
+            "surface_pressure_mean"   : res_fore['hourly']['surface_pressure']     [index_mulai:index_mulai+24],
         })
 
         # ── 9. PREDIKSI & KONVERSI ──────────────────────────────────────
