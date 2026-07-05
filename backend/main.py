@@ -23,82 +23,44 @@ app.add_middleware(
 )
 
 koordinat_bandara = {
-     "Sultan Iskandar Muda - Banda Aceh": {"lat": 5.5239, "lon": 95.4197},
-
+    "Sultan Iskandar Muda - Banda Aceh": {"lat": 5.5239, "lon": 95.4197},
     "Kualanamu - Medan": {"lat": 3.6422, "lon": 98.8853},
-
     "Minangkabau - Padang": {"lat": -0.7866, "lon": 100.2813},
-
     "Sultan Syarif Kasim II - Pekanbaru": {"lat": 0.4611, "lon": 101.4480},
-
     "Hang Nadim - Batam": {"lat": 1.1213, "lon": 104.1190},
-
     "Sultan Thaha - Jambi": {"lat": -1.6366, "lon": 103.6375},
-
     "Fatmawati Soekarno - Bengkulu": {"lat": -3.8631, "lon": 102.3392},
-
     "Sultan Mahmud Badaruddin II - Palembang": {"lat": -2.8981, "lon": 104.7001},
-
     "Depati Amir - Pangkal Pinang": {"lat": -2.1633, "lon": 106.1388},
-
     "Radin Inten II - Bandar Lampung": {"lat": -5.2423, "lon": 105.1788},
-
     "Soekarno-Hatta - Tangerang": {"lat": -6.1256, "lon": 106.6558},
-
     "Halim Perdanakusuma - Jakarta": {"lat": -6.2655, "lon": 106.8855},
-
     "Kertajati - Majalengka": {"lat": -6.5815, "lon": 108.1764},
-
     "Ahmad Yani - Semarang": {"lat": -6.9691, "lon": 110.3758},
-
     "Yogyakarta International - Kulon Progo": {"lat": -7.9043, "lon": 110.0556},
-
     "Juanda - Surabaya": {"lat": -7.3796, "lon": 112.7869},
-
     "Ngurah Rai - Denpasar": {"lat": -8.7481, "lon": 115.1674},
-
     "Lombok - Praya": {"lat": -8.7578, "lon": 116.2758},
-
     "El Tari - Kupang": {"lat": -10.1704, "lon": 123.6669},
-
     "Supadio - Pontianak": {"lat": -0.1499, "lon": 109.4044},
-
     "Tjilik Riwut - Palangkaraya": {"lat": -2.2248, "lon": 113.9433},
-
     "Syamsudin Noor - Banjarmasin": {"lat": -3.4406, "lon": 114.7621},
-
     "Sultan Aji Muhammad Sulaiman - Balikpapan": {"lat": -1.2683, "lon": 116.8944},
-
     "Juwata - Tarakan": {"lat": 3.3300, "lon": 117.5900},
-
     "Sam Ratulangi - Manado": {"lat": 1.5365, "lon": 124.9262},
-
     "Djalaluddin - Gorontalo": {"lat": 0.6365, "lon": 122.8506},
-
     "Mutiara SIS Al-Jufrie - Palu": {"lat": -0.9181, "lon": 119.9096},
-
     "Tampa Padang - Mamuju": {"lat": -2.5867, "lon": 119.0292},
-
     "Sultan Hasanuddin - Makassar": {"lat": -5.0616, "lon": 119.5539},
-
     "Haluoleo - Kendari": {"lat": -4.0814, "lon": 122.4184},
-
     "Pattimura - Ambon": {"lat": -3.7049, "lon": 128.0894},
-
     "Sultan Babullah - Ternate": {"lat": 0.8281, "lon": 127.3800},
-
     "Rendani - Manokwari": {"lat": -0.8917, "lon": 134.0492},
-
     "Domine Eduard Osok - Sorong": {"lat": -0.8878, "lon": 131.2882},
-
     "Sentani - Jayapura": {"lat": -2.5721, "lon": 140.5161},
-
     "Mozes Kilangin - Timika": {"lat": -4.5296, "lon": 136.8860},
-
     "Wamena - Wamena": {"lat": -4.0975, "lon": 138.9519},
-
     "Mopah - Merauke": {"lat": -8.5204, "lon": 140.4168},
-
 }
 
 class RequestBandara(BaseModel):
