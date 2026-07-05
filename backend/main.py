@@ -111,7 +111,15 @@ def proses_prediksi(req: RequestBandara):
             "hourly"    : "wind_speed_10m,precipitation,temperature_2m,relative_humidity_2m,surface_pressure",
             "timezone"  : "Asia/Jakarta"
         }
-        res_hist = requests.get(url_hist, params=params_hist, timeout=25).json()
+        # Retry otomatis maksimal 3 kali jika timeout
+for attempt in range(3):
+    try:
+        res_hist = requests.get(url_hist, params=params_hist, timeout=60).json()
+        break
+    except requests.exceptions.Timeout:
+        if attempt == 2:
+            return {"error": "Server data historis tidak merespons. Coba lagi beberapa saat."}
+        continue
         df_full  = pd.DataFrame(res_hist["hourly"]).dropna()
 
         # ── 2. STRATIFIED OVERSAMPLE ────────────────────────────────────
