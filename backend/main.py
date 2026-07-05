@@ -5,7 +5,7 @@ import requests
 import pandas as pd
 import numpy as np
 from datetime import datetime, timezone, timedelta
-from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LinearRegression
 from sklearn.tree import DecisionTreeRegressor
@@ -66,31 +66,6 @@ koordinat_bandara = {
 class RequestBandara(BaseModel):
     kota: str
 
-BEST_PARAMS = {
-    "Linear Regression": {},
-    "Decision Tree": {
-        "max_depth": 5,
-        "min_samples_split": 5,
-        "min_samples_leaf": 2,
-        "max_features": "sqrt"
-    },
-    "Random Forest": {
-        "n_estimators": 100,
-        "max_depth": 10,
-        "min_samples_split": 2,
-        "min_samples_leaf": 1,
-        "max_features": "sqrt",
-        "n_jobs": -1,
-        "random_state": 42
-    },
-    "SVM (SVR)": {
-        "kernel": "rbf",
-        "C": 10,
-        "epsilon": 0.1,
-        "gamma": "scale"
-    },
-}
-
 @app.post("/api/prediksi")
 def proses_prediksi(req: RequestBandara):
     try:
@@ -101,140 +76,80 @@ def proses_prediksi(req: RequestBandara):
         lat = koordinat_bandara[kota]["lat"]
         lon = koordinat_bandara[kota]["lon"]
 
-        # ── 1. DATA HISTORIS HARIAN 30 TAHUN ───────────────────────────
-        # Menggunakan wind_speed_10m_max (nilai maksimum harian)
-        # sebagai target — lebih relevan untuk keselamatan penerbangan
-        # dan konsisten dengan fitur prakiraan harian
+        # 1. TRAINING DATA HISTORIS
         url_hist = "https://archive-api.open-meteo.com/v1/archive"
         params_hist = {
-            "latitude"  : lat,
-            "longitude" : lon,
-            "start_date": "1996-01-01",
-            "end_date"  : "2025-06-01",
-            "daily"     : "wind_speed_10m_max,precipitation_sum,"
-                          "temperature_2m_mean,relative_humidity_2m_max,"
-                          "surface_pressure_mean",
-            "timezone"  : "Asia/Jakarta"
+            "latitude": lat, "longitude": lon,
+            "start_date": "1996-01-01", "end_date": "2026-04-26",
+            "daily": "wind_speed_10m_max,precipitation_sum,temperature_2m_mean,relative_humidity_2m_max,surface_pressure_mean",
+            "timezone": "Asia/Jakarta"
         }
-        res_hist = requests.get(url_hist, params=params_hist, timeout=30).json()
-        df_full  = pd.DataFrame(res_hist["daily"]).dropna()
+        res_hist = requests.get(url_hist, params=params_hist).json()
+        df = pd.DataFrame(res_hist["daily"]).dropna()
 
-        # ── 2. STRATIFIED OVERSAMPLE ────────────────────────────────────
-        # Bin angin kencang (3 & 4) diambil 50%, bin lain 20%
-        # agar kejadian angin ekstrem lebih terwakili dalam training
-        df_full['speed_bin'] = pd.qcut(
-            df_full['wind_speed_10m_max'],
-            q=5,
-            labels=False,
-            duplicates='drop'
-        )
-
-        frames = []
-        for bin_id in sorted(df_full['speed_bin'].dropna().unique()):
-            subset = df_full[df_full['speed_bin'] == bin_id].copy()
-            frac   = 0.50 if bin_id >= 3 else 0.20
-            frames.append(subset.sample(frac=frac, random_state=42))
-
-        df = pd.concat(frames, ignore_index=True)
-        df = df.drop(columns=['speed_bin'])
-
-        # ── 3. FITUR & TARGET ───────────────────────────────────────────
-        # X: 4 variabel meteorologi harian
-        # y: kecepatan angin maksimum harian (km/jam)
-        X = df[['precipitation_sum', 'temperature_2m_mean',
-                 'relative_humidity_2m_max', 'surface_pressure_mean']]
+        X = df[['precipitation_sum', 'temperature_2m_mean', 'relative_humidity_2m_max', 'surface_pressure_mean']]
         y = df['wind_speed_10m_max']
 
-        # ── 4. SPLIT & STANDARISASI ─────────────────────────────────────
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.2, random_state=42
-        )
-        scaler         = StandardScaler()
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        scaler = StandardScaler()
         X_train_scaled = scaler.fit_transform(X_train)
-        X_test_scaled  = scaler.transform(X_test)
+        X_test_scaled = scaler.transform(X_test)
 
-        # ── 5. MODEL DENGAN HYPERPARAMETER PRE-TUNED ────────────────────
         models = {
-            "Linear Regression": LinearRegression(
-                **BEST_PARAMS["Linear Regression"]
-            ),
-            "Decision Tree": DecisionTreeRegressor(
-                random_state=42,
-                **BEST_PARAMS["Decision Tree"]
-            ),
-            "Random Forest": RandomForestRegressor(
-                **BEST_PARAMS["Random Forest"]
-            ),
-            "SVM (SVR)": SVR(
-                **BEST_PARAMS["SVM (SVR)"]
-            ),
+            "Linear Regression": LinearRegression(),
+            "Decision Tree": DecisionTreeRegressor(random_state=42),
+            "Random Forest": RandomForestRegressor(n_estimators=100, random_state=42),
+            "SVM (SVR)": SVR(kernel='rbf')
         }
 
-        # ── 6. TRAINING + EVALUASI + CROSS-VALIDATION ───────────────────
-        metrics        = []
+        metrics = []
         trained_models = {}
 
         for name, model in models.items():
             model.fit(X_train_scaled, y_train)
-
             pred = model.predict(X_test_scaled)
-            rmse = round(float(np.sqrt(mean_squared_error(y_test, pred))), 4)
-            mae  = round(float(mean_absolute_error(y_test, pred)), 4)
-            r2   = round(float(r2_score(y_test, pred)), 4)
-
-            cv_scores    = cross_val_score(
-                model, X_train_scaled, y_train,
-                scoring='neg_root_mean_squared_error',
-                cv=3, n_jobs=-1
-            )
-            cv_rmse_mean = round(float(-cv_scores.mean()), 4)
-            cv_rmse_std  = round(float(cv_scores.std()), 4)
-
-            metrics.append({
-                "Model"       : name,
-                "RMSE"        : rmse,
-                "MAE"         : mae,
-                "R2"          : r2,
-                "CV_RMSE_Mean": cv_rmse_mean,
-                "CV_RMSE_Std" : cv_rmse_std,
-            })
+            rmse = np.sqrt(mean_squared_error(y_test, pred))
+            mae = mean_absolute_error(y_test, pred)
+            r2 = r2_score(y_test, pred)
+            metrics.append({"Model": name, "RMSE": rmse, "MAE": mae, "R2": r2})
             trained_models[name] = model
 
-        # ── 7. PILIH MODEL TERBAIK ──────────────────────────────────────
-        df_eval    = pd.DataFrame(metrics)
-        best_algo  = df_eval.loc[df_eval['RMSE'].idxmin(), 'Model']
+        df_eval = pd.DataFrame(metrics)
+        best_algo = df_eval.loc[df_eval['RMSE'].idxmin(), 'Model']
         best_model = trained_models[best_algo]
 
-        # ── 8. PRAKIRAAN PER JAM ────────────────────────────────────────
-        tz_jakarta   = timezone(timedelta(hours=7))
-        now          = datetime.now(tz_jakarta)
+        # 2. FORECAST 24 JAM KE DEPAN DARI JAM SEKARANG
+        tz_jakarta = timezone(timedelta(hours=7))
+        now = datetime.now(tz_jakarta)
         jam_sekarang = now.hour
 
         url_fore = "https://api.open-meteo.com/v1/forecast"
         params_fore = {
-            "latitude"     : lat,
-            "longitude"    : lon,
-            "hourly"       : "precipitation,temperature_2m,"
-                             "relative_humidity_2m,surface_pressure",
-            "timezone"     : "Asia/Jakarta",
+            "latitude": lat, "longitude": lon,
+            "hourly": "precipitation,temperature_2m,relative_humidity_2m,surface_pressure",
+            "timezone": "Asia/Jakarta",
             "forecast_days": 3
         }
-        res_fore    = requests.get(url_fore, params=params_fore, timeout=15).json()
+        res_fore = requests.get(url_fore, params=params_fore).json()
+
         index_mulai = jam_sekarang + 1
 
+        all_precip = res_fore['hourly']['precipitation']
+        all_temp   = res_fore['hourly']['temperature_2m']
+        all_humid  = res_fore['hourly']['relative_humidity_2m']
+        all_press  = res_fore['hourly']['surface_pressure']
+
         df_fore = pd.DataFrame({
-            "precipitation_sum"       : res_fore['hourly']['precipitation']        [index_mulai:index_mulai+24],
-            "temperature_2m_mean"     : res_fore['hourly']['temperature_2m']       [index_mulai:index_mulai+24],
-            "relative_humidity_2m_max": res_fore['hourly']['relative_humidity_2m'] [index_mulai:index_mulai+24],
-            "surface_pressure_mean"   : res_fore['hourly']['surface_pressure']     [index_mulai:index_mulai+24],
+            "precipitation_sum":        all_precip[index_mulai:index_mulai+24],
+            "temperature_2m_mean":      all_temp[index_mulai:index_mulai+24],
+            "relative_humidity_2m_max": all_humid[index_mulai:index_mulai+24],
+            "surface_pressure_mean":    all_press[index_mulai:index_mulai+24],
         })
 
-        # ── 9. PREDIKSI & KONVERSI ──────────────────────────────────────
         X_fore_scaled = scaler.transform(df_fore)
-        pred_kmh      = best_model.predict(X_fore_scaled)
-        pred_knot     = [round(float(v) * 0.539957, 2) for v in pred_kmh]
+        pred_kmh = best_model.predict(X_fore_scaled)
+        pred_knot = [round(v * 0.539957, 2) for v in pred_kmh]
 
-        # ── 10. LABEL JAM ───────────────────────────────────────────────
         jam_list = []
         for i in range(24):
             total = jam_sekarang + 1 + i
@@ -243,17 +158,13 @@ def proses_prediksi(req: RequestBandara):
             label = "Hari ini" if hari == 0 else "Besok" if hari == 1 else "Lusa"
             jam_list.append(f"{str(jam).zfill(2)}:00 ({label})")
 
-        # ── 11. RESPONSE ────────────────────────────────────────────────
         return {
-            "status"           : "sukses",
+            "status": "sukses",
             "algoritma_terbaik": best_algo,
-            "metrik"           : df_eval.to_dict('records'),
-            "jam_mulai"        : f"{str(jam_sekarang + 1).zfill(2)}:00",
-            "total_data"       : len(df_full),
-            "data_training"    : len(df),
-            "prediksi_perjam"  : [
-                {"jam": jam_list[i], "knot": pred_knot[i]}
-                for i in range(24)
+            "metrik": df_eval.to_dict('records'),
+            "jam_mulai": f"{str(jam_sekarang + 1).zfill(2)}:00",
+            "prediksi_perjam": [
+                {"jam": jam_list[i], "knot": pred_knot[i]} for i in range(24)
             ]
         }
 
