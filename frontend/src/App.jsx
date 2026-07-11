@@ -229,25 +229,35 @@ export default function App() {
             {/* TABEL METRIK */}
             <div style={{ background: "#0f1f3d", borderRadius: "16px", padding: "1.5rem", border: "1px solid #1e3a5f" }}>
               <h3 style={{ color: "#94a3b8", marginTop: 0 }}>📊 Perbandingan Model Machine Learning</h3>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead>
-                  <tr style={{ borderBottom: "1px solid #1e3a5f" }}>
-                    {["Model", "RMSE", "MAE", "R²"].map(h => (
-                      <th key={h} style={{ padding: "0.75rem", textAlign: "left", color: "#64748b" }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {hasil.metrik.map((m) => (
-                    <tr key={m.Model} style={{ borderBottom: "1px solid #0a0f1e", background: m.Model === hasil.algoritma_terbaik ? "#0c2a3e" : "transparent" }}>
-                      <td style={{ padding: "0.75rem", color: m.Model === hasil.algoritma_terbaik ? "#38bdf8" : "#e2e8f0" }}>{m.Model === hasil.algoritma_terbaik ? "⭐ " : ""}{m.Model}</td>
-                      <td style={{ padding: "0.75rem" }}>{m.RMSE.toFixed(4)}</td>
-                      <td style={{ padding: "0.75rem" }}>{m.MAE.toFixed(4)}</td>
-                      <td style={{ padding: "0.75rem" }}>{m.R2.toFixed(4)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div style={{ overflowX: "auto" }}>
+  <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "600px" }}>
+    <thead>
+      <tr style={{ borderBottom: "1px solid #1e3a5f" }}>
+        {["Model", "RMSE", "MAE", "R²", "CV RMSE Mean", "CV RMSE Std"].map(h => (
+          <th key={h} style={{ padding: "0.75rem", textAlign: "left", color: "#64748b", fontSize: "0.85rem", whiteSpace: "nowrap" }}>{h}</th>
+        ))}
+      </tr>
+    </thead>
+    <tbody>
+      {hasil.metrik.map((m) => (
+        <tr key={m.Model} style={{ borderBottom: "1px solid #0a0f1e", background: m.Model === hasil.algoritma_terbaik ? "#0c2a3e" : "transparent" }}>
+          <td style={{ padding: "0.75rem", color: m.Model === hasil.algoritma_terbaik ? "#38bdf8" : "#e2e8f0", whiteSpace: "nowrap" }}>
+            {m.Model === hasil.algoritma_terbaik ? "⭐ " : ""}{m.Model}
+          </td>
+          <td style={{ padding: "0.75rem" }}>{m.RMSE.toFixed(4)}</td>
+          <td style={{ padding: "0.75rem" }}>{m.MAE.toFixed(4)}</td>
+          <td style={{ padding: "0.75rem" }}>{m.R2.toFixed(4)}</td>
+          <td style={{ padding: "0.75rem", color: "#a78bfa" }}>
+            {m.CV_RMSE_Mean !== undefined ? m.CV_RMSE_Mean.toFixed(4) : "-"}
+          </td>
+          <td style={{ padding: "0.75rem", color: "#94a3b8" }}>
+            {m.CV_RMSE_Std !== undefined ? m.CV_RMSE_Std.toFixed(4) : "-"}
+          </td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
+</div>
             </div>
           </div>
         )}
